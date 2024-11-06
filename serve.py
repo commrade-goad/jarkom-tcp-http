@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import signal
+import mimetypes
 
 # -- SETUP CONFIG -- #
 try:
@@ -33,11 +34,7 @@ def handle_sigint(sig, frame, socket_inp):
 def get_script_path() -> str:
     return os.path.dirname(os.path.realpath(sys.argv[0]))
 
-def html_ok(file_path:str, send_socket):
-    content_type = 'Content-Type: text/html\r\n'
-    # if 'favicon.ico' in file_path:
-    #     content_type = 'Content-Type: image/x-icon\r\n'
-    f = None
+def html_ok(file_path: str, send_socket):
     if file_path.startswith('/'):
         file_path = convert_to_web_path(file_path[1:])
 
@@ -48,28 +45,31 @@ def html_ok(file_path:str, send_socket):
         if convert_to_web_path(keyword) == file_path:
             raise AccessRestrictedError()
 
-    try:
-        f = open(file_path)
-        outputdata = f.read()
-        f.close()
-        
-        send_socket.send("HTTP/1.1 200 OK\r\n".encode())
-        send_socket.send(content_type.encode())
-        send_socket.send("\r\n".encode())
-        send_socket.send(outputdata.encode())
-    except FileNotFoundError as e:
-        raise e
+    content_type, _ = mimetypes.guess_type(file_path)
+    if content_type is None:
+        content_type = "application/octet-stream"  # Default for unknown types
 
-def convert_to_web_path(path:str):
+    try:
+        with open(file_path, 'rb') as f:
+            outputdata = f.read()
+
+        send_socket.send("HTTP/1.1 200 OK\r\n".encode())
+        send_socket.send(f"Content-Type: {content_type}\r\n".encode())
+        send_socket.send("\r\n".encode())
+        
+        send_socket.send(outputdata)
+    except FileNotFoundError:
+        raise
+
+def convert_to_web_path(path: str):
     if path.startswith("/"):
         path = path[1:]
     sc_path = get_script_path()
-    full_path = sc_path + "/" + pconfig.web_path + "/" + path
-    return full_path
+    return os.path.join(sc_path, pconfig.web_path, path)
 
 def read_with_web_context(path) -> str:
     file_path = convert_to_web_path(path)
-    with open(file_path) as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
     return content
 
@@ -88,6 +88,8 @@ if __name__ == '__main__':
         
         try:
             message = connectionSocket.recv(1024).decode()
+            print(f"Received request: {message}")
+            
             if len(message.split()) > 1:
                 try:
                     html_ok(message.split()[1], connectionSocket)
